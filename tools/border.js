@@ -3,7 +3,7 @@
 // "wx-spektrafilm" (https://github.com/Panhe-C/wx-spektrafilm), GPLv3,
 // branch feat/film-border, commit 571f84f.
 //
-// Copyright (C) 2019-2024 Panhe-C and the wx-spektrafilm contributors.
+// Copyright (C) Panhe-C and the wx-spektrafilm contributors.
 // The film modelling of "spektrafilm" is by Andrea Volpato.
 //
 // The file is byte for byte identical to the original; only this header
