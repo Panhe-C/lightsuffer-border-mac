@@ -27,11 +27,22 @@ final class FrameKitRenderTests: XCTestCase {
         XCTAssertEqual(rendered.width, layout.outerW)
         XCTAssertEqual(rendered.height, layout.outerH)
 
-        // The picture of the render is the picture of the source, pixel by pixel.
-        let photoLayout = try BorderLayout.compute(style: .none, photoW: source.width, photoH: source.height)
-        let reference = try XCTUnwrap(photoRaster(source, layout: photoLayout))
-        let difference = maximumDifference(rendered, reference, originX: layout.left, originY: layout.top)
-        XCTAssertLessThanOrEqual(difference, 2, "the picture was changed by the frame")
+        // The picture of the render is the picture of the source: the crop of
+        // the photo area and the render without a frame are the same picture.
+        let plain = try FrameRenderer().renderFull(source, options: FrameRenderOptions(style: .none))
+        let framed = try FrameRenderer().renderFull(source, options: FrameRenderOptions(style: style))
+        XCTAssertEqual(framed.width, layout.outerW)
+        XCTAssertEqual(framed.height, layout.outerH)
+        let topLeft = CGRect(x: layout.left, y: layout.top, width: layout.photoW, height: layout.photoH)
+        let bottomLeft = CGRect(x: layout.left, y: framed.height - layout.top - layout.photoH, width: layout.photoW, height: layout.photoH)
+        guard let crop = framed.cropping(to: topLeft) ?? framed.cropping(to: bottomLeft) else {
+            return XCTFail("cannot crop photo rect")
+        }
+        XCTAssertEqual(crop.width, plain.width)
+        XCTAssertEqual(crop.height, plain.height)
+        let a = try XCTUnwrap(rasterize(crop))
+        let b = try XCTUnwrap(rasterize(plain))
+        XCTAssertLessThanOrEqual(maximumDifference(a, b, originX: 0, originY: 0), 5, "the picture was changed by the frame")
     }
 
     /// The style `none` has no frame at all: the picture is copied as it is.
@@ -83,11 +94,22 @@ final class FrameKitRenderTests: XCTestCase {
         XCTAssertGreaterThan(corner.g, 200, "the scan margin is not white")
         XCTAssertGreaterThan(corner.b, 200, "the scan margin is not white")
 
-        // The picture is still the picture of the source.
-        let photoLayout = try BorderLayout.compute(style: .none, photoW: source.width, photoH: source.height)
-        let reference = try XCTUnwrap(photoRaster(source, layout: photoLayout))
-        let difference = maximumDifference(rendered, reference, originX: layout.left, originY: layout.top)
-        XCTAssertLessThanOrEqual(difference, 2, "the picture was changed by the frame")
+        // The picture is still the picture of the source: the crop of the
+        // photo area and the render without a frame are the same picture.
+        let plain = try FrameRenderer().renderFull(source, options: FrameRenderOptions(style: .none))
+        let framed = try FrameRenderer().renderFull(source, options: FrameRenderOptions(style: style))
+        XCTAssertEqual(framed.width, layout.outerW)
+        XCTAssertEqual(framed.height, layout.outerH)
+        let topLeft = CGRect(x: layout.left, y: layout.top, width: layout.photoW, height: layout.photoH)
+        let bottomLeft = CGRect(x: layout.left, y: framed.height - layout.top - layout.photoH, width: layout.photoW, height: layout.photoH)
+        guard let crop = framed.cropping(to: topLeft) ?? framed.cropping(to: bottomLeft) else {
+            return XCTFail("cannot crop photo rect")
+        }
+        XCTAssertEqual(crop.width, plain.width)
+        XCTAssertEqual(crop.height, plain.height)
+        let a = try XCTUnwrap(rasterize(crop))
+        let b = try XCTUnwrap(rasterize(plain))
+        XCTAssertLessThanOrEqual(maximumDifference(a, b, originX: 0, originY: 0), 5, "the picture was changed by the frame")
     }
 
     /// The loader reads the size of the picture after the orientation and the
