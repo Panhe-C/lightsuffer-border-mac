@@ -57,6 +57,28 @@ final class FrameKitExportTests: XCTestCase {
         XCTAssertNotNil(secondAttributes[.size] as? Int)
     }
 
+    /// The name of the exported file comes from the name of the source
+    /// picture (and not from the name of its folder).
+    func testExportNamesTheFileAfterTheSourcePicture() throws {
+        let url = try Fixtures.sample("landscape.jpg")
+        let source = try ImageLoader.load(url)
+        let directory = try Fixtures.temporaryDirectory("export-name")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let image = try FrameRenderer().renderFull(source, options: FrameRenderOptions(style: .black))
+        let options = ImageExporter.Options(format: .jpeg, quality: 0.9, suffix: "_frame", outputDirectory: directory)
+        let written = try ImageExporter.export(image: image, source: source, options: options)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: written.path))
+
+        // The name is the name of the picture with the suffix: `landscape_frame`.
+        let name = written.deletingPathExtension().lastPathComponent
+        XCTAssertTrue(name.hasPrefix("landscape_frame"), "the name of the file is \(name)")
+        // It is not the name of the folder of the source (`samples`) ...
+        XCTAssertFalse(name.hasPrefix("samples"), "the name of the file is \(name)")
+        // ... and it is not the name of the folder of the export.
+        XCTAssertFalse(name.hasPrefix(directory.lastPathComponent), "the name of the file is \(name)")
+    }
+
     /// The export writes the orientation 1 (the pixels are already oriented) and
     /// keeps the EXIF block of the source.
     func testExportKeepsTheMetadataAndSetsTheOrientationToOne() throws {
@@ -80,7 +102,9 @@ final class FrameKitExportTests: XCTestCase {
         if let value = tiff[kCGImagePropertyTIFFOrientation] as? NSNumber {
             XCTAssertEqual(value.intValue, 1)
         }
-        if let value = exif[kCGImagePropertyExifOrientation] as? NSNumber {
+        // The SDK does not export the constant of the EXIF orientation, so the
+        // raw name of the key is used ("Orientation").
+        if let value = exif["Orientation" as CFString] as? NSNumber {
             XCTAssertEqual(value.intValue, 1)
         }
 

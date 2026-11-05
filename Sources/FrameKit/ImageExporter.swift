@@ -54,7 +54,7 @@ public enum ExportFormat: String, CaseIterable, Codable {
 
     /// The format of a source picture.
     public static func format(ofSourceType identifier: String) -> ExportFormat {
-        let type = UTType(identifier: identifier)
+        let type = UTType(identifier)
         if let type = type, type.conforms(to: UTType.heic) { return .heic }
         if let type = type, type.conforms(to: UTType.jpeg) { return .jpeg }
         if let type = type, type.conforms(to: UTType.png) { return .png }
@@ -114,8 +114,9 @@ public enum ImageExporter {
 
     /// Writes the picture and returns the file it wrote.
     ///
-    /// The name of the file is `<name><suffix>.<ext>`; an existing file is
-    /// never overwritten (the name gets `_2`, `_3`, ...).
+    /// The name of the file is `<name><suffix>.<ext>` (the name of the source
+    /// picture without its extension); an existing file is never overwritten
+    /// (the name gets `_2`, `_3`, ...).
     public static func export(
         image: CGImage,
         source: LoadedImage?,
@@ -135,7 +136,7 @@ public enum ImageExporter {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = uniqueURL(
             in: directory,
-            name: source?.url.deletingLastPathComponent().lastPathComponent ?? "picture",
+            name: source?.url.deletingPathExtension().lastPathComponent ?? "picture",
             suffix: options.suffix,
             format: format
         )
@@ -188,7 +189,9 @@ public enum ImageExporter {
         var exif = (properties[kCGImagePropertyExifDictionary] as? [CFString: Any]) ?? [:]
         exif[kCGImagePropertyExifPixelXDimension] = width
         exif[kCGImagePropertyExifPixelYDimension] = height
-        exif[kCGImagePropertyExifOrientation] = 1
+        // The SDK of the CI does not export the constant, so the key is the
+        // raw EXIF name of the orientation ("Orientation").
+        exif["Orientation" as CFString] = 1
         properties[kCGImagePropertyExifDictionary] = exif
         // The TIFF dictionary: the orientation and the size.
         var tiff = (properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]) ?? [:]
@@ -196,17 +199,19 @@ public enum ImageExporter {
         tiff[kCGImagePropertyTIFFXResolution] = tiff[kCGImagePropertyTIFFXResolution] ?? 72
         tiff[kCGImagePropertyTIFFYResolution] = tiff[kCGImagePropertyTIFFYResolution] ?? 72
         tiff[kCGImagePropertyTIFFResolutionUnit] = tiff[kCGImagePropertyTIFFResolutionUnit] ?? 2
+        // The read only TIFF keys are dropped. The SDK of the CI does not
+        // export most of these constants, so the raw TIFF names are used.
         for key in [
-            kCGImagePropertyTIFFImageWidth,
-            kCGImagePropertyTIFFImageLength,
-            kCGImagePropertyTIFFBitsPerSample,
-            kCGImagePropertyTIFFSampleFormat,
-            kCGImagePropertyTIFFPhotometricInterpretation,
-            kCGImagePropertyTIFFSamplesPerPixel,
-            kCGImagePropertyTIFFRowsPerStrip,
-            kCGImagePropertyTIFFStripByteCounts,
-            kCGImagePropertyTIFFPlanarConfiguration,
-            kCGImagePropertyTIFFColorMap,
+            "ImageWidth" as CFString,
+            "ImageLength" as CFString,
+            "BitsPerSample" as CFString,
+            "SampleFormat" as CFString,
+            "PhotometricInterpretation" as CFString,
+            "SamplesPerPixel" as CFString,
+            "RowsPerStrip" as CFString,
+            "StripByteCounts" as CFString,
+            "PlanarConfiguration" as CFString,
+            "ColorMap" as CFString,
         ] {
             tiff.removeValue(forKey: key)
         }

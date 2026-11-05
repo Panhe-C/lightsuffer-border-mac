@@ -162,7 +162,7 @@ public final class CGCanvas: Canvas2D {
     }
 
     public func rotate(_ angle: Double) {
-        context.rotate(CGFloat(angle))
+        context.rotate(by: CGFloat(angle))
     }
 
     public func scale(_ x: Double, _ y: Double) {
@@ -246,8 +246,10 @@ public final class CGCanvas: Canvas2D {
                 return EdgeFont(font: font, name: name, isCondensed: name != fallbackFontName)
             }
         }
-        // The system font of last resort.
+        // The system font of last resort; the call gives nil when the system
+        // has no UI font for the language, so the bold system font is used.
         let system = CTFontCreateUIFontForLanguage(.system, pointSize, nil)
+            ?? CTFontCreateWithName("Helvetica-Bold" as CFString, pointSize, nil)
         return EdgeFont(font: system, name: "System", isCondensed: false)
     }
 

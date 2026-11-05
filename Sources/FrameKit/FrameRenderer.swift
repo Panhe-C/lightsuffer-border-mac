@@ -235,7 +235,7 @@ public final class FrameRenderer {
     ) -> CGContext? {
         let space = FrameRenderer.renderColorSpace(colorSpace)
         let deep = bitDepth > 8 && !hasAlpha
-        let alphaInfo: CGAlphaInfo = hasAlpha ? .premultipliedLast : .noneSkipLast
+        let alphaInfo: CGImageAlphaInfo = hasAlpha ? .premultipliedLast : .noneSkipLast
         var info = CGBitmapInfo(rawValue: alphaInfo.rawValue)
         if deep {
             info = CGBitmapInfo(rawValue: alphaInfo.rawValue | CGBitmapInfo.byteOrder16Big.rawValue)

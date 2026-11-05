@@ -158,10 +158,12 @@ public enum ImageLoader {
 
     /// The uniform type identifier of a file.
     public static func uniformTypeIdentifier(of properties: [CFString: Any], url: URL) -> String {
-        if let identifier = properties[kCGImagePropertyUniformTypeIdentifier] as? String {
+        // The SDK of the CI does not export the constant, so the raw name of
+        // the key is used ("UniformTypeIdentifier").
+        if let identifier = properties["UniformTypeIdentifier" as CFString] as? String {
             return identifier
         }
-        if let type = UTType(filenameExtension: url.pathExtension), type.isImage {
+        if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) {
             return type.identifier
         }
         return UTType.jpeg.identifier
@@ -183,7 +185,7 @@ public enum ImageLoader {
     /// The bits per component of the pixels.
     public static func bitDepth(image: CGImage, properties: [CFString: Any]) -> Int {
         if let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any],
-           let depth = (tiff[kCGImagePropertyTIFFDepth] as? NSNumber)?.intValue, depth > 0 {
+           let depth = (tiff["Depth" as CFString] as? NSNumber)?.intValue, depth > 0 {
             return depth
         }
         if let depth = (properties[kCGImagePropertyDepth] as? NSNumber)?.intValue, depth > 0 {
