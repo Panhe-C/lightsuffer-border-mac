@@ -1,0 +1,166 @@
+name: CI
+
+# The permissions are only used by the release job (the tags v*); the build
+# itself only reads the repository and writes the artifacts of the run.
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build, test and bundle (macOS)
+    # macos-14 is the fallback when macos-15 is not available.
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      # a) the sources
+      - name: checkout
+        uses: actions/checkout@v4
+
+      # b) node (the parity tools are written in JavaScript)
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # c) the node tools of tools/ (node-canvas is optional)
+      - name: install the node tools
+        run: npm ci --prefix tools
+
+      # d) the package (FrameCore, FrameKit, frame-cli, the app and the tests)
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        run: swift test
+
+      # e) the parity with the JavaScript original (the job fails on a mismatch)
+      - name: parity with tools/border.js
+        run: |
+          swift build --product frame-cli
+          node tools/parity-check.mjs
+          mkdir -p dist
+          cp out/parity-report.json dist/parity-report.json
+
+      # f) the .app bundle, the zip and the DMG
+      - name: bundle the application
+        run: bash scripts/bundle-app.sh dist
+
+      # g) the renders of the samples (every style and every picture) and the
+      #    round trip of the formats
+      - name: render the samples
+        run: |
+          set -euo pipefail
+          # The helper of the bundle is the universal release binary.
+          CLI="dist/Light Suffer Frame.app/Contents/MacOS/frame-cli"
+          if [ ! -x "$CLI" ]; then
+            swift build -c release --product frame-cli
+            BIN="$(swift build -c release --product frame-cli --show-bin-path 2>/dev/null || true)"
+            if [ -z "$BIN" ] || [ ! -x "$BIN/frame-cli" ]; then BIN=".build/release"; fi
+            CLI="$BIN/frame-cli"
+          fi
+          "$CLI" --help > /dev/null
+          mkdir -p dist/samples
+          STYLES="none thin-white polaroid black film35 film120 edge-black-thin edge-black edge-white-thin edge-white"
+          for style in $STYLES; do
+            mkdir -p "dist/samples/$style"
+            for image in samples/*.jpg; do
+              name="$(basename "$image" .jpg)"
+              "$CLI" render --style "$style" --text "KODAK PORTRA 400" --frame-number 12 \
+                "$image" "dist/samples/$style/${name}_frame.jpg"
+            done
+          done
+          # The formats: sips makes the PNG, the TIFF and the HEIC, then the
+          # frames are written as JPEG again.
+          mkdir -p dist/samples/roundtrip
+          sips -s format png samples/landscape.jpg --out dist/samples/roundtrip/source.png
+          sips -s format tiff samples/landscape.jpg --out dist/samples/roundtrip/source.tiff
+          sips -s format heic samples/landscape.jpg --out dist/samples/roundtrip/source.heic \
+            || echo "warning: the HEIC conversion is not supported on this runner"
+          for format in png tiff heic; do
+            input="dist/samples/roundtrip/source.$format"
+            [ -f "$input" ] || continue
+            "$CLI" render --style film120 --text "KODAK PORTRA 400" \
+              "$input" "dist/samples/roundtrip/source_${format}_frame.jpg"
+          done
+          # The metadata of everything that was written.
+          {
+            echo "# the metadata of the exports (sips -g all)"
+            echo
+            for file in dist/samples/*/*.jpg dist/samples/roundtrip/*; do
+              [ -f "$file" ] || continue
+              echo "## $file"
+              sips -g all "$file" || true
+              echo
+            done
+            echo "# the metadata of the round trip (mdls)"
+            for file in dist/samples/roundtrip/*; do
+              [ -f "$file" ] || continue
+              echo "## $file"
+              mdls "$file" || true
+              echo
+            done
+          } > dist/samples/meta.txt
+
+      # h) the picture of the application (best effort: it needs a window server)
+      - name: the screenshot of the application
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          # The application of the bundle is the universal release binary.
+          APP="dist/Light Suffer Frame.app/Contents/MacOS/LightSufferFrame"
+          if [ ! -x "$APP" ]; then
+            swift build -c release --product LightSufferFrame
+            BIN="$(swift build -c release --product LightSufferFrame --show-bin-path 2>/dev/null || true)"
+            if [ -z "$BIN" ] || [ ! -x "$BIN/LightSufferFrame" ]; then BIN=".build/release"; fi
+            APP="$BIN/LightSufferFrame"
+          fi
+          mkdir -p dist
+          "$APP" --snapshot dist/screenshot.png samples/landscape.jpg samples/portrait.jpg
+
+      # i) the artifacts of the run
+      - name: upload the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    name: release (only for the tags v*)
+    needs: build
+    # A push on a branch never creates a release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: write
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: download the artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts
+          path: dist
+
+      - name: the release of the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          zip="$(ls dist/LightSufferFrame-*-universal.zip | head -n 1)"
+          dmg="$(ls dist/LightSufferFrame-*-universal.dmg | head -n 1)"
+          gh release create "${{ github.ref_name }}" "$zip" "$dmg" \
+            --title "Light Suffer Frame ${{ github.ref_name }}" \
+            --notes "The universal build (arm64 + x86_64) of Light Suffer Frame. The app is signed ad hoc: the first time, open it with the right button (Open) or with xattr -dr com.apple.quarantine."
