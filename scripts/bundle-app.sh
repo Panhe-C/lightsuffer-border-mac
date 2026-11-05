@@ -49,20 +49,20 @@ echo "    the artifacts go to $DEST"
 
 # MARK: - the binaries
 
-# Looks for a built product (the release ones first).
-find_binary() {
-  local product="$1" dir="$2" hit
-  hit="$(find "$dir" -type f -name "$product" 2>/dev/null | grep -E '/(Release|release)/' | head -n 1 || true)"
-  if [ -z "$hit" ]; then
-    hit="$(find "$dir" -type f -name "$product" 2>/dev/null | head -n 1 || true)"
-  fi
-  printf '%s\n' "$hit"
+if ! command -v lipo > /dev/null 2>&1; then
+  echo "error: lipo is needed (the script only runs on macOS)" >&2
+  exit 1
+fi
+
+# The architectures of a binary (nothing when lipo cannot read it).
+binary_archs() {
+  lipo -archs "$1" 2>/dev/null || true
 }
 
 # Has the binary both architectures?
 has_both_archs() {
   local archs
-  archs="$(lipo -archs "$1" 2>/dev/null || true)"
+  archs="$(binary_archs "$1")"
   case " $archs " in
     *" arm64 "*) ;;
     *) return 1 ;;
@@ -74,16 +74,70 @@ has_both_archs() {
   return 0
 }
 
+# The built products of a folder, the best first: the release ones of the
+# universal build (the .build folder also holds the single architecture
+# binaries of the intermediate steps of the build).
+product_candidates() {
+  local product="$1" dir="$2"
+  [ -d "$dir" ] || return 0
+  find "$dir" -type f -name "$product" 2>/dev/null \
+    | grep -F '/Products/Release/' | sort || true
+  find "$dir" -type f -name "$product" 2>/dev/null \
+    | grep -F '/release/' | sort || true
+  find "$dir" -type f -name "$product" 2>/dev/null | sort || true
+}
+
+# Resolves the path of a built product.
+#
+#   resolve_product PRODUCT DIR [SWIFT BUILD ARGUMENTS...]
+#
+# The build itself says where the product is (--show-bin-path); the search of
+# the .build folder is the fallback. The universal binary comes first: the
+# build of the two architectures keeps the single architecture ones in the
+# .build folder too.
+resolve_product() {
+  local product="$1" dir="$2"
+  shift 2
+  local line candidate best=""
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ -d "$line" ] || continue
+    candidate="$(cd "$line" && pwd)/$product"
+    [ -f "$candidate" ] || continue
+    if has_both_archs "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    if [ -z "$best" ]; then
+      best="$candidate"
+    fi
+  done < <(swift build -c release "$@" --product "$product" --show-bin-path 2>/dev/null || true)
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if has_both_archs "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    if [ -z "$best" ]; then
+      best="$candidate"
+    fi
+  done < <(product_candidates "$product" "$dir")
+  printf '%s\n' "$best"
+}
+
 echo "==> building the universal release binaries"
 swift build -c release --arch arm64 --arch x86_64 --product "$EXECUTABLE"
 swift build -c release --arch arm64 --arch x86_64 --product "$HELPER"
 
-APP_BINARY="$(find_binary "$EXECUTABLE" "$ROOT/.build")"
-CLI_BINARY="$(find_binary "$HELPER" "$ROOT/.build")"
-if [ -z "$APP_BINARY" ] || [ -z "$CLI_BINARY" ]; then
+APP_BINARY="$(resolve_product "$EXECUTABLE" "$ROOT/.build" --arch arm64 --arch x86_64)"
+CLI_BINARY="$(resolve_product "$HELPER" "$ROOT/.build" --arch arm64 --arch x86_64)"
+if [ -z "$APP_BINARY" ] || [ ! -f "$APP_BINARY" ] \
+  || [ -z "$CLI_BINARY" ] || [ ! -f "$CLI_BINARY" ]; then
   echo "error: the release binaries were not found in $ROOT/.build" >&2
   exit 1
 fi
+echo "    the application: $APP_BINARY"
+echo "    the helper: $CLI_BINARY"
 
 # When the build did not make a universal binary (the two architectures are
 # built apart), the two slices are joined with lipo.
@@ -97,17 +151,24 @@ if ! has_both_archs "$APP_BINARY" || ! has_both_archs "$CLI_BINARY"; then
   done
   mkdir -p "$TMP/bin"
   for product in "$EXECUTABLE" "$HELPER"; do
-    arm="$(find_binary "$product" "$ROOT/.build/universal-arm64")"
-    intel="$(find_binary "$product" "$ROOT/.build/universal-x86_64")"
-    if [ -z "$arm" ] || [ -z "$intel" ]; then
+    arm="$(resolve_product "$product" "$ROOT/.build/universal-arm64" \
+      --arch arm64 --scratch-path "$ROOT/.build/universal-arm64")"
+    intel="$(resolve_product "$product" "$ROOT/.build/universal-x86_64" \
+      --arch x86_64 --scratch-path "$ROOT/.build/universal-x86_64")"
+    if [ -z "$arm" ] || [ ! -f "$arm" ] || [ -z "$intel" ] || [ ! -f "$intel" ]; then
       echo "error: the $product binary of one architecture is missing" >&2
       exit 1
     fi
     lipo -create "$arm" "$intel" -output "$TMP/bin/$product"
+    # lipo does not always keep the mode of the slices.
+    chmod +x "$TMP/bin/$product"
   done
   APP_BINARY="$TMP/bin/$EXECUTABLE"
   CLI_BINARY="$TMP/bin/$HELPER"
 fi
+
+# The binaries are run by the script and by the bundle.
+chmod +x "$APP_BINARY" "$CLI_BINARY" 2>/dev/null || true
 
 # MARK: - the bundle
 
@@ -207,6 +268,13 @@ PLIST
 plutil -lint "$APP/Contents/Info.plist"
 
 echo "==> drawing the icon"
+if [ ! -x "$CLI_BINARY" ]; then
+  chmod +x "$CLI_BINARY" || true
+fi
+if [ ! -x "$CLI_BINARY" ]; then
+  echo "error: the helper $CLI_BINARY is not executable" >&2
+  exit 1
+fi
 "$CLI_BINARY" icon "$TMP/AppIcon.iconset" > /dev/null
 iconutil -c icns "$TMP/AppIcon.iconset" -o "$APP/Contents/Resources/AppIcon.icns"
 
