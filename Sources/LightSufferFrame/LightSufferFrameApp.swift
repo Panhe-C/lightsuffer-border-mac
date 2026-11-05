@@ -84,12 +84,14 @@ struct LightSufferFrameApp: App {
             .frame(width: 640, height: 400)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
-        renderer.render { _, context in
-            if let image = context.makeImage() {
-                writePNG(image, to: request.output)
-            }
-            NSApp.terminate(nil)
+        // The `render` closure of macOS 13 only gets a `CGContext` (the
+        // `size` and `makeImage()` are macOS 14); the ready made image of
+        // the renderer is used instead.
+        if let image = renderer.cgImage
+            ?? renderer.nsImage.flatMap({ $0.cgImage(forProposedRect: nil, context: nil, hints: nil) }) {
+            writePNG(image, to: request.output)
         }
+        NSApp.terminate(nil)
     }
 }
 
